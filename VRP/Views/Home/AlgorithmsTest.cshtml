@@ -1,0 +1,109 @@
+﻿@model VRP.Models.AlgorithmsTestViewModel
+@using Newtonsoft.Json
+@{
+    Layout = "~/Views/Shared/_Layout.cshtml";
+}
+<br />
+<p class="alert alert-info">
+    Test może portwać kilka minut.
+</p>
+
+@using(Html.BeginForm("AlgorithmsTest", "Home", FormMethod.Post))
+{
+    <input type="submit" name="TestBtn" value="Test #1"/>
+    <input type="submit" name="TestBtn" value="Test #2" />
+    <input type="submit" name="TestBtn" value="Test #3" />
+    <input type="submit" name="TestBtn" value="Test #4" />
+    <input type="submit" name="TestBtn" value="Test #5" />
+    <input type="submit" name="TestBtn" value="Test #6" />
+}
+<br />
+<div style="color:#008000">
+    Koszt trasy dla algorytmu genetycznego @Html.DisplayFor(x => x.GAPathCost) km, 
+    czas wykonywania się algorytmu: @Html.DisplayFor(x=>x.GAExecutionTime) ms.
+</div>
+<br />
+<div style="color:#00FF00">
+    Koszt trasy dla algorytmu Clarke and Wright @Html.DisplayFor(x => x.ClarkeWrightPathCost) km, 
+    czas wykonywania się algorytmu: @Html.DisplayFor(x => x.ClarkeWrightExecutionTime) ms.
+</div>
+<br />
+<style>
+    #map {
+        height: 400px;
+        width: 100%;
+    }
+</style>
+
+<div id="map"></div>
+
+<script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCkYDMEPLWCFvq3Oi-LJyEsMuh_06Fk62g&callback=initMap">
+</script>
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+
+<script>
+    function initMap() {
+        var uluru = { lat: 50.0357607, lng: 22.0005656 };
+        var map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 12,
+            center: uluru
+        });
+        
+        var gaSolution = @Html.Raw(JsonConvert.SerializeObject(this.Model.GAPath));
+        var clarkeWrightSolution = @Html.Raw(JsonConvert.SerializeObject(this.Model.ClarkeWrightPath));
+        var gaPath=[];
+        var cwPath=[];
+
+        //draw markers and init gaPath
+        $.each(gaSolution, function (i, item) {
+            if(item.IsMarked){
+                var marker = new google.maps.Marker({
+                    'position': new google.maps.LatLng(item.Latitude, item.Longitude),
+                    'map': map
+                });
+
+                var infowindow = new google.maps.InfoWindow({
+                    content:item.dict["addr:street"] + " " + item.dict["addr:housenumber"]
+                });
+
+                marker.addListener('click', function() {
+                    infowindow.open(map, marker);
+                });
+
+                if(i==0 || i==(gaSolution.length - 1)){
+                    marker.setIcon('http://maps.google.com/mapfiles/ms/icons/blue-dot.png')
+                }
+                //else{
+                //    marker.setIcon('http://chart.apis.google.com/chart?chst=d_map_pin_letter&chld=' + i + '|FE6256|000000');
+                //}
+            }
+
+            gaPath.push(new google.maps.LatLng(item.Latitude, item.Longitude));
+        })
+
+        //init cwPath
+        $.each(clarkeWrightSolution, function (i, item) {
+            cwPath.push(new google.maps.LatLng(item.Latitude, item.Longitude));
+        })
+
+        var flightGAPath = new google.maps.Polyline({
+            path: gaPath,
+            geodesic: true,
+            strokeColor: '#008000',
+            strokeOpacity: 1.0,
+            strokeWeight: 6
+        });
+
+        var flightCWPath = new google.maps.Polyline({
+            path: cwPath,
+            geodesic: true,
+            strokeColor: '#00FF00', //limonka
+            strokeOpacity: 1.0,
+            strokeWeight: 2
+        });
+
+        flightGAPath.setMap(map);
+        flightCWPath.setMap(map);
+    }
+</script>

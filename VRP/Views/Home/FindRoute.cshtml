@@ -1,0 +1,401 @@
+﻿@model VRP.Models.FindRouteViewModel
+@using Newtonsoft.Json
+@{
+    Layout = "~/Views/Shared/_Layout.cshtml";
+}
+<br />
+@Html.ValidationSummary(false, "", new { @class = "text-danger" })
+
+<p class="alert alert-info">
+    Obliczenia mogą portwać kilka minut.
+</p>
+
+@using (Html.BeginForm("FindRoute", "Home", FormMethod.Post))
+{
+    @Html.AntiForgeryToken()
+    <p>
+        Szybkość obliczeń
+        <input type="number" min="1" max="3" step="0.01" value="1" name="speed" />
+        (im mniejsza wartość tym algorytm działa wolniej, ale osiąga lepsze wyniki)
+    </p>
+    <br /><br />
+
+    <span>Magazyn: </span>
+    @Html.TextBoxFor(x => x.AddressList[0].StreetName, new { @class = "form-control streetName", @placeholder = "Ulica", @style = "display:inline-block" })
+    @Html.TextBoxFor(x => x.AddressList[0].HouseNumber, new { @class = "form-control houseNumber", @placeholder = "Nr", @style = "display:inline-block" })
+    <br /><br />
+
+    <span>Klienci: </span>
+    <div class="clientsLocalization">
+        @Html.TextBoxFor(x => x.AddressList[1].StreetName, new { @class = "form-control streetName", @placeholder = "Ulica", @style = "display:inline-block" })
+        @Html.TextBoxFor(x => x.AddressList[1].HouseNumber, new { @class = "form-control houseNumber", @placeholder = "Nr", @style = "display:inline-block" })
+        <br />
+        @Html.TextBoxFor(x => x.AddressList[2].StreetName, new { @class = "form-control streetName", @placeholder = "Ulica", @style = "display:inline-block" })
+        @Html.TextBoxFor(x => x.AddressList[2].HouseNumber, new { @class = "form-control houseNumber", @placeholder = "Nr", @style = "display:inline-block" })
+        <br />
+    </div>
+
+    <input type="submit" value="Wyznacz trasę" id="determineRouteSubmit" />
+    <input type="button" value="Dodaj klienta" id="addClientLocalization" />
+}
+<!--<div id="progressBar"><div></div></div>-->
+<div style="color:#008000">Koszt trasy dla algorytmu genetycznego @Html.DisplayFor(x => x.GARouteCost) km</div>
+<br />
+<div style="color:#00FF00">Koszt trasy dla algorytmu Clarke and Wright @Html.DisplayFor(x => x.CWRouteCost) km</div>
+<br />
+
+<style>
+    #map {
+        height: 400px;
+        width: 100%;
+    }
+</style>
+
+<style>
+        .ui-autocomplete {
+            max-height: 200px;
+            overflow-y: auto;
+            /* prevent horizontal scrollbar */
+            overflow-x: hidden;
+        }
+        /* IE 6 doesn't support max-height
+    * we use height instead, but this forces the menu to always be this tall
+    */
+        * html .ui-autocomplete {
+            height: 100px;
+        }
+</style>
+
+<style>
+    #progressBar {
+    width: 400px;
+    height: 22px;
+    border: 1px solid #111;
+    background-color: #292929;
+}
+#progressBar div {
+    height: 100%;
+    color: #fff;
+    text-align: right;
+    line-height: 22px; /* same as #progressBar height if we want text middle aligned */
+    width: 0;
+    background-color: #0099ff;
+}
+</style>
+
+<div id="map"></div>
+
+<link href="http://code.jquery.com/ui/1.10.2/themes/smoothness/jquery-ui.css" rel="Stylesheet" />
+<script src="//code.jquery.com/jquery-1.10.2.min.js" type="text/javascript"></script>
+
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCkYDMEPLWCFvq3Oi-LJyEsMuh_06Fk62g&callback=initMap"
+        type="text/javascript"></script>
+
+
+<!-- Enclose the Javascript in a "section" so that it is rendered in the correct order after scripts have been loaded etc -->
+@section scripts {
+    <section class="scripts">
+        <script type="text/javascript">
+            //AUTOCOMPLETE FOR STREET NAME
+            $(document).ready(function () {
+                $(".streetName").autocomplete({
+                    source: function (request, response) {
+                        $.ajax({
+                            url: "/Home/GetStreetsNames",
+                            type: "POST",
+                            dataType: "json",
+                            data: {
+                                partName: request.term,
+                                houseNumber: $("#"+$(this.element).prop("id").replace("StreetName", "HouseNumber")+"").val()
+                            },
+                            success: function (data) {
+                                response(data)
+                            }
+                        })
+                    },
+                    minLength: 3,
+                    delay: 1000
+                });
+            })
+
+            //AUTOCOMPLETE FOR HOUSE NUMBER
+            $(document).ready(function () {
+                $(".houseNumber").autocomplete({
+                    source: function (request, response) {
+                        $.ajax({
+                            url: "/Home/GetHousesNumbers",
+                            type: "POST",
+                            dataType: "json",
+                            data: {
+                                partNumber: request.term,
+                                streetName: $("#"+$(this.element).prop("id").replace("HouseNumber", "StreetName")+"").val()
+                            },
+                            success: function (data) {
+                                response(data)
+                            }
+                        })
+                    },
+                    minLength: 1,
+                    delay: 1000
+                });
+            })
+
+            //DYNAMIC TEXTBOXES
+            $(document).ready(function(){
+                var localizationCounter=3;
+                var addressList = @Html.Raw(JsonConvert.SerializeObject(this.Model.AddressList));
+
+                if(addressList != null){
+                    addressesNumber = addressList.length;
+                    while(addressesNumber>3){
+                        if(addressList[localizationCounter].StreetName!=null){
+                            $($(".clientsLocalization")).append
+                                ('<input class="form-control streetName" name="AddressList['+localizationCounter+'].StreetName"'
+                                +' placeholder="Ulica" style = "display:inline-block" type="text" '
+                                +' value="'+addressList[localizationCounter].StreetName+'" id="AddressList_'+(localizationCounter)+'__StreetName" />');
+
+                            //AUTOCOMPLETE FOR STREET NAME
+                            $('.streetName').each(function(i, el) {
+                                el = $(el);
+                                el.autocomplete({
+                                    source: function (request, response) {
+                                        $.ajax({
+                                            url: "/Home/GetStreetsNames",
+                                            type: "POST",
+                                            dataType: "json",
+                                            data: {
+                                                partName: request.term,
+                                                houseNumber: $("#"+el.attr('id').replace("StreetName", "HouseNumber")).val()
+                                            },
+                                            success: function (data) {
+                                                response(data)
+                                            }
+                                        })
+                                    },
+                                    minLength: 3,
+                                    delay: 1000
+                                });
+                            });
+                        }
+                        else{
+                            $($(".clientsLocalization")).append
+                            ('<input class="form-control streetName" name="AddressList['+localizationCounter+'].StreetName"'
+                            +' placeholder="Ulica" style = "display:inline-block" type="text" value="" id="AddressList_'+(localizationCounter)+'__StreetName" />');
+
+                            //AUTOCOMPLETE FOR STREET NAME
+                            $('.streetName').each(function(i, el) {
+                                el = $(el);
+                                el.autocomplete({
+                                    source: function (request, response) {
+                                        $.ajax({
+                                            url: "/Home/GetStreetsNames",
+                                            type: "POST",
+                                            dataType: "json",
+                                            data: {
+                                                partName: request.term,
+                                                houseNumber: $("#"+el.attr('id').replace("StreetName", "HouseNumber")).val()
+                                            },
+                                            success: function (data) {
+                                                response(data)
+                                            }
+                                        })
+                                    },
+                                    minLength: 3,
+                                    delay: 1000
+                                });
+                            });
+                        }
+                        if(addressList[localizationCounter].HouseNumber!=null){
+                            $($(".clientsLocalization")).append
+                                ('<input class="form-control houseNumber" name="AddressList['+localizationCounter+'].HouseNumber" '
+                                +' placeholder="Nr" style = "display:inline-block" type="text" '
+                                +' value="'+addressList[localizationCounter].HouseNumber+'" id="AddressList_'+(localizationCounter)+'__HouseNumber" /></br>');
+
+                            //AUTOCOMPLETE FOR HOUSE NUMBER
+                            $('.houseNumber').each(function(i, el) {
+                                el = $(el);
+                                el.autocomplete({
+                                    source: function (request, response) {
+                                        $.ajax({
+                                            url: "/Home/GetHousesNumbers",
+                                            type: "POST",
+                                            dataType: "json",
+                                            data: {
+                                                partNumber: request.term,
+                                                streetName: $("#"+el.attr('id').replace("HouseNumber", "StreetName")).val()
+                                            },
+                                            success: function (data) {
+                                                response(data)
+                                            }
+                                        })
+                                    },
+                                    minLength: 1,
+                                    delay: 1000
+                                });
+                            });
+                        }
+                        else{
+                            $($(".clientsLocalization")).append
+                            ('<input class="form-control houseNumber" name="AddressList['+localizationCounter+'].HouseNumber" '
+                            +' placeholder="Nr" style = "display:inline-block" type="text" value="" id="AddressList_'+(localizationCounter)+'__HouseNumber" /></br>');
+
+                            //AUTOCOMPLETE FOR HOUSE NUMBER
+                            $('.houseNumber').each(function(i, el) {
+                                el = $(el);
+                                el.autocomplete({
+                                    source: function (request, response) {
+                                        $.ajax({
+                                            url: "/Home/GetHousesNumbers",
+                                            type: "POST",
+                                            dataType: "json",
+                                            data: {
+                                                partNumber: request.term,
+                                                streetName: $("#"+el.attr('id').replace("HouseNumber", "StreetName")).val()
+                                            },
+                                            success: function (data) {
+                                                response(data)
+                                            }
+                                        })
+                                    },
+                                    minLength: 1,
+                                    delay: 1000
+                                });
+                            });
+                        }
+
+                        addressesNumber--;
+                        localizationCounter++;
+                    }
+                }
+
+                $("#addClientLocalization").click(function(){
+                    if(localizationCounter>100){
+                        alert("Maksymalna liczba klientów to 100");
+                        return false;
+                    }
+                    $($(".clientsLocalization")).append
+                        ('<input class="form-control streetName" name="AddressList['+localizationCounter+'].StreetName"'
+                        +' placeholder="Ulica" style = "display:inline-block" type="text" value="" id="AddressList_'+(localizationCounter)+'__StreetName" />'
+                        +'<input class="form-control houseNumber" name="AddressList['+localizationCounter+'].HouseNumber" placeholder="Nr"'
+                        +' style = "display:inline-block" type="text" value="" id="AddressList_'+(localizationCounter)+'__HouseNumber" /></br>');
+                    localizationCounter++;
+
+                    //AUTOCOMPLETE FOR STREET NAME
+                    $('.streetName').each(function(i, el) {
+                        el = $(el);
+                        el.autocomplete({
+                            source: function (request, response) {
+                                $.ajax({
+                                    url: "/Home/GetStreetsNames",
+                                    type: "POST",
+                                    dataType: "json",
+                                    data: {
+                                        partName: request.term,
+                                        houseNumber: $("#"+el.attr('id').replace("StreetName", "HouseNumber")).val()
+                                    },
+                                    success: function (data) {
+                                        response(data)
+                                    }
+                                })
+                            },
+                            minLength: 3,
+                            delay: 1000
+                        });
+                    });
+
+                    //AUTOCOMPLETE FOR HOUSE NUMBER
+                    $('.houseNumber').each(function(i, el) {
+                        el = $(el);
+                        el.autocomplete({
+                            source: function (request, response) {
+                                $.ajax({
+                                    url: "/Home/GetHousesNumbers",
+                                    type: "POST",
+                                    dataType: "json",
+                                    data: {
+                                        partNumber: request.term,
+                                        streetName: $("#"+el.attr('id').replace("HouseNumber", "StreetName")).val()
+                                    },
+                                    success: function (data) {
+                                        response(data)
+                                    }
+                                })
+                            },
+                            minLength: 1,
+                            delay: 1000
+                        });
+                    });
+                })
+            })
+
+
+            $(document).ready(function () {
+                Initialize();
+            });
+
+            function Initialize() {
+                var uluru = { lat: 50.0357607, lng: 22.0005656 };
+                var map = new google.maps.Map(document.getElementById('map'), {
+                    zoom: 12,
+                    center: uluru
+                });
+
+                var gaSolution = @Html.Raw(JsonConvert.SerializeObject(this.Model.GARoute));
+                var clarkeWrightSolution = @Html.Raw(JsonConvert.SerializeObject(this.Model.CWRoute));
+                var gaPath=[];
+                var cwPath=[];
+
+                //draw markers and init gaPath
+                $.each(gaSolution, function (i, item) {
+                    if(item.IsMarked){
+                        var marker = new google.maps.Marker({
+                            'position': new google.maps.LatLng(item.Latitude, item.Longitude),
+                            'map': map
+                        });
+
+                        var infowindow = new google.maps.InfoWindow({
+                            content:item.dict["addr:street"] + " " + item.dict["addr:housenumber"]
+                        });
+
+                        marker.addListener('click', function() {
+                            infowindow.open(map, marker);
+                        });
+
+                        if(i==0 || i==(gaSolution.length - 1)){
+                            marker.setIcon('http://maps.google.com/mapfiles/ms/icons/blue-dot.png')
+                        }
+                        //else{
+                        //    marker.setIcon('http://chart.apis.google.com/chart?chst=d_map_pin_letter&chld=' + i + '|FE6256|000000');
+                        //}
+                    }
+
+                    gaPath.push(new google.maps.LatLng(item.Latitude, item.Longitude));
+                })
+
+                //initialize cwPath
+                $.each(clarkeWrightSolution, function (i, item) {
+                    cwPath.push(new google.maps.LatLng(item.Latitude, item.Longitude));
+                })
+
+                var flightGAPath = new google.maps.Polyline({
+                    path: gaPath,
+                    geodesic: true,
+                    strokeColor: '#008000',
+                    strokeOpacity: 1.0,
+                    strokeWeight: 6
+                });
+
+                var flightCWPath = new google.maps.Polyline({
+                    path: cwPath,
+                    geodesic: true,
+                    strokeColor: '#00FF00', //limonka
+                    strokeOpacity: 1.0,
+                    strokeWeight: 2
+                });
+
+                flightGAPath.setMap(map);
+                flightCWPath.setMap(map);
+            }
+        </script>
+    </section>
+}
